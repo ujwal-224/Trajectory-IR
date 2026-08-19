@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Sentinel errors.
@@ -78,7 +79,33 @@ func NewFileSystem(root string) (*FileSystem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileSystem{Root: abs}, nil
+	fs := &FileSystem{Root: abs}
+	fs.sweepStaleTempFiles(24 * time.Hour)
+	return fs, nil
+}
+
+func (fs *FileSystem) sweepStaleTempFiles(maxAge time.Duration) {
+	casDir := filepath.Join(fs.Root, "cas")
+	if _, err := os.Stat(casDir); err != nil {
+		return
+	}
+	now := time.Now()
+	// mkstemp prefix is "."+h+".", matching ^\.[0-9a-f]{64}\.
+	prefixRegex := regexp.MustCompile(`^\.[0-9a-f]{64}\.`)
+	
+	_ = filepath.WalkDir(casDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if prefixRegex.MatchString(d.Name()) {
+			if info, err := d.Info(); err == nil {
+				if now.Sub(info.ModTime()) > maxAge {
+					_ = os.Remove(path)
+				}
+			}
+		}
+		return nil
+	})
 }
 
 // PathFor returns the absolute path for a content hash under this store.

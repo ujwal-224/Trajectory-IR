@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import tempfile
+import time
 from pathlib import Path
 
 from trajectory_ir.storage.cas import (
@@ -39,6 +41,25 @@ class FileSystemCAS:
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root).resolve()
         self._root.mkdir(parents=True, exist_ok=True)
+        self._sweep_stale_temp_files()
+
+    def _sweep_stale_temp_files(self, max_age_seconds: float = 86400.0) -> None:
+        """Clean up orphaned temporary files left by processes that were hard-killed."""
+        cas_dir = self._root / "cas"
+        if not cas_dir.is_dir():
+            return
+
+        now = time.time()
+        # mkstemp prefix is f".{h}.", so they start with . followed by 64 hex chars and another .
+        prefix_pattern = re.compile(r"^\.[0-9a-f]{64}\.")
+        
+        for p in cas_dir.rglob(".*"):
+            if p.is_file() and prefix_pattern.match(p.name):
+                try:
+                    if now - p.stat().st_mtime > max_age_seconds:
+                        p.unlink()
+                except OSError:
+                    pass
 
     @property
     def root(self) -> Path:

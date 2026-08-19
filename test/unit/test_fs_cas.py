@@ -121,3 +121,36 @@ def test_cas_protocol_runtime_check(store):
 def test_put_creates_sharded_dirs(store):
     h = store.put(os.urandom(32))
     assert (store.root / "cas" / h[:2]).is_dir()
+
+
+def test_sweep_stale_temp_files(tmp_path):
+    import time
+    
+    cas_dir = tmp_path / "cas"
+    h = content_hash(b"dummy")
+    prefix = f".{h}."
+    shard_dir = cas_dir / h[:2]
+    shard_dir.mkdir(parents=True)
+
+    # 1. Stale temp file
+    stale_temp = shard_dir / f"{prefix}stale"
+    stale_temp.write_bytes(b"stale")
+    # Make it 25 hours old
+    old_time = time.time() - 90000
+    os.utime(stale_temp, (old_time, old_time))
+
+    # 2. Fresh temp file
+    fresh_temp = shard_dir / f"{prefix}fresh"
+    fresh_temp.write_bytes(b"fresh")
+    
+    # 3. Real object (no prefix) with old mtime
+    real_obj = shard_dir / h
+    real_obj.write_bytes(b"real")
+    os.utime(real_obj, (old_time, old_time))
+
+    # Initialize FileSystemCAS which should trigger the sweep
+    FileSystemCAS(tmp_path)
+
+    assert not stale_temp.exists(), "stale temp file should be deleted"
+    assert fresh_temp.exists(), "fresh temp file should be kept"
+    assert real_obj.exists(), "real object should be kept regardless of age"
